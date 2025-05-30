@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.18/css/jquery.dataTables.min.css"/>
+    <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
+    <script src="https://cdn.datatables.net/1.10.18/js/jquery.dataTables.min.js"></script>
+  </head>
+  <body>
+    <h2>This is what we found</h2>
+        <table id="result_db" class="display" style="width:95%" class="cell-border compact stripe">
+            <tr>
+                <th>text</th>
+                <th>theme</th>
+                <th>sentiment</th>
+                <th>theme score</th>
+                <th>sentiment score</th>
+            </tr>
+        </table>
+        <script>
+            function setupData() {
+                $(document).ready(function () {
+                    $('#result_db').DataTable({
+                        "paging":   true,
+                        "searching": true,
+                        "ajax": {
+                            "url": "/db",
+                            "dataType": "json",
+                            "dataSrc": "data",
+                            "contentType":"application/json"
+                        },
+                        "columns": [
+                            {"data": "text",
+                            "title": "text"},
+                            {"data": "theme",
+                            "title": "theme"},
+                            {"data": "sentiment",
+                            "title": "sentiment"},
+                            {"data": "theme score",
+                            "title": "theme score"},
+                            {"data": "sentiment score",
+                            "title": "sentiment score"},
+                        ],
+                        "columnDefs": [
+                    {"className": "dt-left", "targets": "_all"}
+                    ],
+                    });
+                });
+            }
+            $( window ).on( "load", setupData );
+    </script> 
+  </body>
+{% endblock %}
