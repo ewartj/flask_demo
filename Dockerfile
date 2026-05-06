@@ -2,6 +2,12 @@
 FROM node:20-slim AS frontend
 
 WORKDIR /build
+COPY corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
 COPY app/static/ts/ ./ts/
 RUN npx --yes esbuild ts/main.ts --outfile=main.js --bundle --minify
 
@@ -9,9 +15,18 @@ RUN npx --yes esbuild ts/main.ts --outfile=main.js --bundle --minify
 # ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+# ── Corporate CA cert ─────────────────────────────────────────────────────────
+COPY corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HF_HOME=/app/.cache/huggingface
+    HF_HOME=/app/.cache/huggingface \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
 

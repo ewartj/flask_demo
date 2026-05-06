@@ -168,6 +168,9 @@ uv.lock
 .cache/
 ~/.cache/huggingface/
 
+# Corporate CA cert — keep local, never commit
+corp-ca.crt
+
 # App runtime files
 db.csv
 .env
