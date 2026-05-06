@@ -13,7 +13,7 @@ RUN npx --yes esbuild ts/main.ts --outfile=main.js --bundle --minify
 
 
 # ── Stage 2: Python runtime ───────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM python:3.12-slim
 
 # ── Corporate CA cert ─────────────────────────────────────────────────────────
 COPY corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
@@ -27,6 +27,8 @@ ENV PYTHONUNBUFFERED=1 \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
