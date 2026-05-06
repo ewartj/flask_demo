@@ -1,0 +1,39 @@
+# ── Stage 1: compile TypeScript ───────────────────────────────────────────────
+FROM node:20-slim AS frontend
+
+WORKDIR /build
+COPY app/static/ts/ ./ts/
+RUN npx --yes esbuild ts/main.ts --outfile=main.js --bundle --minify
+
+
+# ── Stage 2: Python runtime ───────────────────────────────────────────────────
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/app/.cache/huggingface
+
+WORKDIR /app
+
+# ── 1. Install Python dependencies (cached layer — reruns only if pyproject.toml changes)
+COPY pyproject.toml ./
+RUN uv sync --no-dev --no-install-project
+
+# ── 2. Copy application source
+COPY . .
+
+# ── 3. Drop in the compiled JS from the frontend stage
+COPY --from=frontend /build/main.js ./app/static/js/main.js
+
+# ── 4. Pre-download HuggingFace demo models so first request is instant
+RUN uv run python scripts/download_models.py
+
+EXPOSE 5000
+
+# 1 worker + threads: avoids duplicating ~1 GB of model weights per worker.
+CMD ["uv", "run", "gunicorn", \
+     "--bind", "0.0.0.0:5000", \
+     "--workers", "1", \
+     "--threads", "4", \
+     "--timeout", "120", \
+     "analysis_app:app"]
