@@ -170,6 +170,10 @@ uv.lock
 
 # App runtime files
 db.csv
+.env
+
+# Real SetFit models (PII-adjacent, never commit)
+ext_models/
 
 # Node (esbuild / npx)
 node_modules/
