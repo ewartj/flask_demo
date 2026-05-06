@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{# ── Colour tokens ── #}
+{% if result.label|lower == "positive" %}
+  {% set is_positive = true %}
+  {% set accent_text  = "text-emerald-400" %}
+  {% set accent_bg    = "bg-emerald-500" %}
+  {% set accent_glow  = "shadow-emerald-900" %}
+  {% set accent_badge = "bg-emerald-950 border-emerald-800 text-emerald-300" %}
+  {% set chart_color  = "#10b981" %}
+  {% set hue = 150 %}
+{% else %}
+  {% set is_positive = false %}
+  {% set accent_text  = "text-rose-400" %}
+  {% set accent_bg    = "bg-rose-500" %}
+  {% set accent_glow  = "shadow-rose-900" %}
+  {% set accent_badge = "bg-rose-950 border-rose-800 text-rose-300" %}
+  {% set chart_color  = "#f43f5e" %}
+  {% set hue = 0 %}
+{% endif %}
+
+<!-- Back link -->
+<a href="{{ url_for('index') }}"
+   class="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200
+          transition-colors mb-8 group">
+  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 group-hover:-translate-x-0.5 transition-transform"
+       fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+  </svg>
+  Try another phrase
+</a>
+
+<!-- ── Top grid: prediction + chart  |  probability bars ── -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+  <!-- Prediction hero card -->
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Prediction</h2>
+      <span class="text-xs font-mono border rounded-full px-3 py-1 {{ accent_badge }}">
+        {{ result.label }}
+      </span>
+    </div>
+
+    <!-- Input text -->
+    <p class="text-slate-300 text-sm leading-relaxed border-l-2 border-slate-700 pl-3 italic">
+      "{{ result.text }}"
+    </p>
+
+    <!-- Doughnut chart + confidence number -->
+    <div class="flex items-center gap-6 mt-2">
+      <div class="relative w-28 h-28 flex-shrink-0">
+        <canvas id="confidence-chart"></canvas>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <span class="{{ accent_text }} text-xl font-bold leading-none">
+            {{ "%.0f"|format(result.confidence * 100) }}%
+          </span>
+          <span class="text-slate-500 text-xs mt-0.5">conf.</span>
+        </div>
+      </div>
+      <div>
+        <p class="text-slate-400 text-sm">The model is
+          <span class="{{ accent_text }} font-semibold">
+            {{ "%.1f"|format(result.confidence * 100) }}% confident
+          </span>
+          this text is
+          <span class="{{ accent_text }} font-semibold">{{ result.label }}</span>.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Class probabilities card -->
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-5 justify-center">
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Class probabilities</h2>
+    {% for label, score in result.scores.items() %}
+      {% if label|lower == "positive" %}
+        {% set bar_color = "bg-emerald-500" %}
+        {% set label_color = "text-emerald-400" %}
+      {% else %}
+        {% set bar_color = "bg-rose-500" %}
+        {% set label_color = "text-rose-400" %}
+      {% endif %}
+      <div>
+        <div class="flex justify-between items-baseline mb-2">
+          <span class="text-sm font-medium {{ label_color }}">{{ label }}</span>
+          <span class="text-sm font-mono text-slate-300">{{ "%.1f"|format(score * 100) }}%</span>
+        </div>
+        <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+          <div class="h-full rounded-full bar-transition {{ bar_color }}"
+               style="width: 0%"
+               data-target="{{ score }}">
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<!-- ── Token attention heatmap ── -->
+<div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+  <div class="flex items-start justify-between mb-4">
+    <div>
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">
+        Token attention heatmap
+      </h2>
+      <p class="text-slate-500 text-xs mt-1">
+        Colour intensity = how much the model attended to each token when classifying.
+        Hover a token for its exact score.
+      </p>
+    </div>
+
+    <!-- Legend -->
+    <div class="flex items-center gap-2 flex-shrink-0 ml-4">
+      <span class="text-xs text-slate-500">Low</span>
+      <div class="w-24 h-3 rounded-full"
+           style="background: linear-gradient(to right,
+                    hsl({{ hue }}, 60%, 15%),
+                    hsl({{ hue }}, 80%, 55%));">
+      </div>
+      <span class="text-xs text-slate-500">High</span>
+    </div>
+  </div>
+
+  <!-- Token pills -->
+  <div class="flex flex-wrap gap-1.5 leading-loose">
+    {% for token in result.tokens %}
+      {# Map 0-1 → lightness 15% (dark) to 55% (vibrant) #}
+      {% set lightness = (15 + token.normalized * 40)|int %}
+      {% set saturation = (40 + token.normalized * 40)|int %}
+      {% set bg = "hsl(" ~ hue ~ "," ~ saturation ~ "%," ~ lightness ~ "%)" %}
+      {# Text: white when dark background, slate-900 for very bright #}
+      {% set fg = "rgba(255,255,255,0.95)" if lightness < 45 else "rgba(255,255,255,0.7)" %}
+      <span
+        class="token-pill inline-block cursor-default select-none rounded-lg
+               border border-white/5 text-sm font-medium px-2.5 py-1"
+        style="background:{{ bg }}; color:{{ fg }};"
+        data-attention="{{ token.normalized }}">
+        {{ token.display }}
+      </span>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<!-- Chart.js for the doughnut chart -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    const confidence = {{ result.confidence }};
+    const remaining  = 1 - confidence;
+    const color      = "{{ chart_color }}";
+
+    const ctx = document.getElementById("confidence-chart");
+    if (!ctx) return;
+
+    new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        datasets: [{
+          data: [confidence, remaining],
+          backgroundColor: [color, "rgba(255,255,255,0.05)"],
+          borderWidth: 0,
+          hoverOffset: 0,
+        }]
+      },
+      options: {
+        cutout: "78%",
+        animation: { animateRotate: true, duration: 900, easing: "easeInOutQuart" },
+        plugins: { tooltip: { enabled: false }, legend: { display: false } },
+      }
+    });
+  })();
+</script>
+{% endblock %}
