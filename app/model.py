@@ -1,15 +1,18 @@
 """
 Model inference layer.
 
-Mode is selected by whether MLFLOW_TRACKING_URI is set (env var or config.yaml):
+Production (MLflow + SetFit):
+  Downloads model artifacts from MLflow then loads them with SetFitModel.from_pretrained(),
+  mirroring Themiator's modeller.py approach exactly.
 
-  Production (MLflow):
-    Set MLFLOW_TRACKING_URI in config.yaml or as an env var.
-    MLFLOW_TRACKING_TOKEN  — env var only (secret, never in config.yaml)
+  Required config (config.yaml or env vars):
+    mlflow.tracking_uri          / MLFLOW_TRACKING_URI
+    mlflow.sentiment_model_uri   / MLFLOW_SENTIMENT_MODEL_URI  (default: models:/Sentiment/Production)
+    mlflow.theme_model_uri       / MLFLOW_THEME_MODEL_URI      (default: models:/Theme/Production)
+    MLFLOW_TRACKING_TOKEN        — env var only, never in config
 
-  Demo (HuggingFace):
-    Currently commented out — re-enable when HuggingFace is accessible.
-    Uncomment the HF blocks below and restore the _predict_demo / predict() logic.
+Demo (HuggingFace):
+  Currently commented out — re-enable when HuggingFace is accessible.
 """
 from __future__ import annotations
 import re
@@ -23,7 +26,7 @@ from app.config_loader import mlflow_config, sentiment_labels, theme_labels
 # )
 # import torch
 
-# ── Config ───────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 _mlflow_cfg = mlflow_config()
 USE_MLFLOW  = bool(_mlflow_cfg["tracking_uri"])
 
@@ -35,29 +38,46 @@ THEME_INT_TO_LABEL     = theme_labels()
 # _DEMO_ZERO_SHOT_MODEL = "cross-encoder/nli-deberta-v3-small"
 
 # ── Lazy singletons ──────────────────────────────────────────────────────────
-_mlflow_sentiment = None
-_mlflow_theme     = None
-# _demo_sent_tok = None   # HF demo — commented out while HF is blocked
-# _demo_sent_mdl = None
+_sentiment_model = None
+_theme_model     = None
+# _demo_sent_tok   = None   # HF — commented out while HF is blocked
+# _demo_sent_mdl   = None
 # _demo_theme_pipe = None
 
 
-# ── Text cleaning (matches Themiator's clean_text pipeline) ──────────────────
+# ── Text cleaning (matches Themiator's Prediction.clean_df()) ────────────────
 def _clean(text: str) -> str:
-    return re.sub(r"\d+", "", text.lower().strip())
+    text = text.lower().strip()
+    text = re.sub(r"[0-9]+", "", text)
+    return text
 
 
-# ── MLflow loader ─────────────────────────────────────────────────────────────
-def _load_mlflow() -> None:
-    global _mlflow_sentiment, _mlflow_theme
-    if _mlflow_sentiment is None:
-        import mlflow
-        if _mlflow_cfg["tracking_token"]:
-            import os
-            os.environ["MLFLOW_TRACKING_TOKEN"] = _mlflow_cfg["tracking_token"]
-        mlflow.set_tracking_uri(_mlflow_cfg["tracking_uri"])
-        _mlflow_sentiment = mlflow.pyfunc.load_model(_mlflow_cfg["sentiment_model_uri"])
-        _mlflow_theme     = mlflow.pyfunc.load_model(_mlflow_cfg["theme_model_uri"])
+# ── MLflow + SetFit loader ────────────────────────────────────────────────────
+def _load_models() -> None:
+    """
+    Downloads SetFit model artifacts from MLflow then loads them with
+    SetFitModel.from_pretrained() — the same pattern as Themiator's run_pred_v2().
+    """
+    global _sentiment_model, _theme_model
+    if _sentiment_model is not None:
+        return
+
+    import os
+    import mlflow
+    from setfit import SetFitModel
+
+    if _mlflow_cfg["tracking_token"]:
+        os.environ["MLFLOW_TRACKING_TOKEN"] = _mlflow_cfg["tracking_token"]
+
+    mlflow.set_tracking_uri(_mlflow_cfg["tracking_uri"])
+
+    # Download artifacts locally then load with SetFit
+    # URI format: models:/ModelName/Production  or  runs:/run_id/artifact_path
+    sent_path  = mlflow.artifacts.download_artifacts(_mlflow_cfg["sentiment_model_uri"])
+    theme_path = mlflow.artifacts.download_artifacts(_mlflow_cfg["theme_model_uri"])
+
+    _sentiment_model = SetFitModel.from_pretrained(sent_path)
+    _theme_model     = SetFitModel.from_pretrained(theme_path)
 
 
 # ── Demo loaders — commented out while HF is blocked ─────────────────────────
@@ -78,7 +98,7 @@ def _load_mlflow() -> None:
 #         )
 
 
-# ── Token merging (RoBERTa Ġ, BERT ##, SentencePiece ▁) ─────────────────────
+# ── Token merging (kept for when HF demo is re-enabled) ──────────────────────
 def _merge_tokens(tokens: list[str], scores: list[float]) -> list[dict]:
     SPECIAL = {"<s>", "</s>", "<pad>", "[CLS]", "[SEP]"}
     merged: list[dict] = []
@@ -107,20 +127,21 @@ def _merge_tokens(tokens: list[str], scores: list[float]) -> list[dict]:
 
 
 # ── Predict paths ─────────────────────────────────────────────────────────────
-def _predict_mlflow(text: str) -> dict:
-    _load_mlflow()
+def _predict_setfit(text: str) -> dict:
+    _load_models()
     clean = _clean(text)
 
-    sent_int  = int(_mlflow_sentiment.predict([clean])[0])
-    theme_int = int(_mlflow_theme.predict([clean])[0])
+    # predict() takes a list and returns a list — matches Themiator exactly
+    sent_int  = int(_sentiment_model.predict([clean])[0])
+    theme_int = int(_theme_model.predict([clean])[0])
 
     return {
         "text": text,
         "sentiment": {
-            "label":      SENTIMENT_INT_TO_LABEL.get(sent_int, str(sent_int)),
-            "confidence": None,
+            "label":      SENTIMENT_INT_TO_LABEL.get(sent_int,  str(sent_int)),
+            "confidence": None,   # SetFit predict() doesn't return probabilities
             "scores":     {},
-            "tokens":     [],
+            "tokens":     [],     # attention heatmap not available with SetFit
         },
         "theme": {
             "label":      THEME_INT_TO_LABEL.get(theme_int, str(theme_int)),
@@ -145,8 +166,8 @@ def _predict_mlflow(text: str) -> dict:
 #     raw_tokens   = _demo_sent_tok.convert_ids_to_tokens(inputs["input_ids"][0])
 #     cls_attn     = outputs.attentions[-1][0][:, 0, :].mean(dim=0).tolist()
 #     tokens       = _merge_tokens(raw_tokens, cls_attn)
-#     theme_cands  = theme_candidates()
-#     zs           = _demo_theme_pipe(clean, theme_cands, multi_label=False)
+#     from app.config_loader import theme_candidates
+#     zs           = _demo_theme_pipe(clean, theme_candidates(), multi_label=False)
 #     return {
 #         "text": text,
 #         "sentiment": {
@@ -171,6 +192,6 @@ def predict(text: str) -> dict:
             "MLFLOW_TRACKING_URI is not configured. Set it in config.yaml or as "
             "the MLFLOW_TRACKING_URI environment variable."
         )
-    return _predict_mlflow(text)
-    # When HF is accessible again, restore this:
-    # return _predict_mlflow(text) if USE_MLFLOW else _predict_demo(text)
+    return _predict_setfit(text)
+    # Restore this when HF is accessible:
+    # return _predict_setfit(text) if USE_MLFLOW else _predict_demo(text)
