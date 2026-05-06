@@ -1,0 +1,20 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      # Override in production — never leave the default in a public deployment
+      SECRET_KEY: ${SECRET_KEY:-changeme-in-production}
+      FLASK_APP: analysis_app.py
+    volumes:
+      # Mount your real SetFit models here when ready.
+      # Matches the hardcoded path in Themiator: /app/ext_models/
+      - ${EXT_MODELS_PATH:-./ext_models}:/app/ext_models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

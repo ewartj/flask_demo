@@ -2,26 +2,26 @@
 
 {% block content %}
 
-{# ── Colour tokens ── #}
-{% if result.label|lower == "positive" %}
-  {% set is_positive = true %}
-  {% set accent_text  = "text-emerald-400" %}
-  {% set accent_bg    = "bg-emerald-500" %}
-  {% set accent_glow  = "shadow-emerald-900" %}
-  {% set accent_badge = "bg-emerald-950 border-emerald-800 text-emerald-300" %}
-  {% set chart_color  = "#10b981" %}
-  {% set hue = 150 %}
+{# ── Sentiment colour tokens ── #}
+{% set sent_label = result.sentiment.label|lower %}
+{% if sent_label == "positive" %}
+  {% set sent_text   = "text-emerald-400" %}
+  {% set sent_badge  = "bg-emerald-950 border-emerald-800 text-emerald-300" %}
+  {% set sent_color  = "#10b981" %}
+  {% set sent_hue    = 150 %}
+{% elif sent_label == "negative" %}
+  {% set sent_text   = "text-rose-400" %}
+  {% set sent_badge  = "bg-rose-950 border-rose-800 text-rose-300" %}
+  {% set sent_color  = "#f43f5e" %}
+  {% set sent_hue    = 0 %}
 {% else %}
-  {% set is_positive = false %}
-  {% set accent_text  = "text-rose-400" %}
-  {% set accent_bg    = "bg-rose-500" %}
-  {% set accent_glow  = "shadow-rose-900" %}
-  {% set accent_badge = "bg-rose-950 border-rose-800 text-rose-300" %}
-  {% set chart_color  = "#f43f5e" %}
-  {% set hue = 0 %}
+  {% set sent_text   = "text-amber-400" %}
+  {% set sent_badge  = "bg-amber-950 border-amber-800 text-amber-300" %}
+  {% set sent_color  = "#f59e0b" %}
+  {% set sent_hue    = 40 %}
 {% endif %}
 
-<!-- Back link -->
+{# ── Back link ── #}
 <a href="{{ url_for('index') }}"
    class="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200
           transition-colors mb-8 group">
@@ -32,108 +32,155 @@
   Try another phrase
 </a>
 
-<!-- ── Top grid: prediction + chart  |  probability bars ── -->
+{# ── Input text ── #}
+<p class="text-slate-500 text-sm mb-6 border-l-2 border-slate-700 pl-3 italic">
+  &ldquo;{{ result.text }}&rdquo;
+</p>
+
+{# ══════════════════════════════════════════════════════
+   Row 1: Sentiment card  |  Theme card
+   ══════════════════════════════════════════════════════ #}
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
 
-  <!-- Prediction hero card -->
+  {# ── Sentiment ── #}
   <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
     <div class="flex items-center justify-between">
-      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Prediction</h2>
-      <span class="text-xs font-mono border rounded-full px-3 py-1 {{ accent_badge }}">
-        {{ result.label }}
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Sentiment</h2>
+      <span class="text-xs font-mono border rounded-full px-3 py-1 {{ sent_badge }}">
+        {{ result.sentiment.label }}
       </span>
     </div>
 
-    <!-- Input text -->
-    <p class="text-slate-300 text-sm leading-relaxed border-l-2 border-slate-700 pl-3 italic">
-      "{{ result.text }}"
-    </p>
-
-    <!-- Doughnut chart + confidence number -->
-    <div class="flex items-center gap-6 mt-2">
-      <div class="relative w-28 h-28 flex-shrink-0">
-        <canvas id="confidence-chart"></canvas>
+    {# Donut + description #}
+    <div class="flex items-center gap-5">
+      <div class="relative w-24 h-24 flex-shrink-0">
+        <canvas id="sent-chart"></canvas>
         <div class="absolute inset-0 flex flex-col items-center justify-center">
-          <span class="{{ accent_text }} text-xl font-bold leading-none">
-            {{ "%.0f"|format(result.confidence * 100) }}%
+          <span class="{{ sent_text }} text-lg font-bold leading-none">
+            {{ "%.0f"|format(result.sentiment.confidence * 100) }}%
           </span>
-          <span class="text-slate-500 text-xs mt-0.5">conf.</span>
+          <span class="text-slate-600 text-xs">conf.</span>
         </div>
       </div>
-      <div>
-        <p class="text-slate-400 text-sm">The model is
-          <span class="{{ accent_text }} font-semibold">
-            {{ "%.1f"|format(result.confidence * 100) }}% confident
-          </span>
-          this text is
-          <span class="{{ accent_text }} font-semibold">{{ result.label }}</span>.
-        </p>
-      </div>
+      <p class="text-slate-400 text-sm leading-relaxed">
+        Model is
+        <span class="{{ sent_text }} font-semibold">
+          {{ "%.1f"|format(result.sentiment.confidence * 100) }}% confident
+        </span>
+        the sentiment is
+        <span class="{{ sent_text }} font-semibold">{{ result.sentiment.label }}</span>.
+      </p>
+    </div>
+
+    {# Class probability bars #}
+    <div class="flex flex-col gap-3 mt-1">
+      {% for label, score in result.sentiment.scores.items() %}
+        {% set lc = label|lower %}
+        {% if lc == "positive" %}
+          {% set bar = "bg-emerald-500" %}
+          {% set lbl = "text-emerald-400" %}
+        {% elif lc == "negative" %}
+          {% set bar = "bg-rose-500" %}
+          {% set lbl = "text-rose-400" %}
+        {% else %}
+          {% set bar = "bg-amber-400" %}
+          {% set lbl = "text-amber-400" %}
+        {% endif %}
+        <div>
+          <div class="flex justify-between items-baseline mb-1">
+            <span class="text-xs font-medium {{ lbl }}">{{ label }}</span>
+            <span class="text-xs font-mono text-slate-400">{{ "%.1f"|format(score * 100) }}%</span>
+          </div>
+          <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div class="h-full rounded-full bar-transition {{ bar }}"
+                 style="width:0%" data-target="{{ score }}"></div>
+          </div>
+        </div>
+      {% endfor %}
     </div>
   </div>
 
-  <!-- Class probabilities card -->
-  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-5 justify-center">
-    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Class probabilities</h2>
-    {% for label, score in result.scores.items() %}
-      {% if label|lower == "positive" %}
-        {% set bar_color = "bg-emerald-500" %}
-        {% set label_color = "text-emerald-400" %}
-      {% else %}
-        {% set bar_color = "bg-rose-500" %}
-        {% set label_color = "text-rose-400" %}
-      {% endif %}
-      <div>
-        <div class="flex justify-between items-baseline mb-2">
-          <span class="text-sm font-medium {{ label_color }}">{{ label }}</span>
-          <span class="text-sm font-mono text-slate-300">{{ "%.1f"|format(score * 100) }}%</span>
-        </div>
-        <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
-          <div class="h-full rounded-full bar-transition {{ bar_color }}"
-               style="width: 0%"
-               data-target="{{ score }}">
-          </div>
+  {# ── Theme ── #}
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">Theme</h2>
+      <span class="text-xs font-mono border rounded-full px-3 py-1
+                   bg-indigo-950 border-indigo-800 text-indigo-300">
+        {{ result.theme.label }}
+      </span>
+    </div>
+
+    {# Donut + description #}
+    <div class="flex items-center gap-5">
+      <div class="relative w-24 h-24 flex-shrink-0">
+        <canvas id="theme-chart"></canvas>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <span class="text-indigo-400 text-lg font-bold leading-none">
+            {{ "%.0f"|format(result.theme.confidence * 100) }}%
+          </span>
+          <span class="text-slate-600 text-xs">conf.</span>
         </div>
       </div>
-    {% endfor %}
+      <p class="text-slate-400 text-sm leading-relaxed">
+        Most likely theme:
+        <span class="text-indigo-400 font-semibold">{{ result.theme.label }}</span>
+        <span class="text-slate-500">
+          ({{ "%.1f"|format(result.theme.confidence * 100) }}% confidence)
+        </span>
+      </p>
+    </div>
+
+    {# Theme score bars — top 4 ─ #}
+    <div class="flex flex-col gap-3 mt-1">
+      {% for label, score in result.theme.scores.items() %}
+        {% if loop.index <= 4 %}
+        <div>
+          <div class="flex justify-between items-baseline mb-1">
+            <span class="text-xs font-medium text-indigo-300 truncate max-w-[70%]">{{ label }}</span>
+            <span class="text-xs font-mono text-slate-400">{{ "%.1f"|format(score * 100) }}%</span>
+          </div>
+          <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div class="h-full rounded-full bar-transition bg-indigo-500"
+                 style="width:0%" data-target="{{ score }}"></div>
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
   </div>
 
 </div>
 
-<!-- ── Token attention heatmap ── -->
+{# ══════════════════════════════════════════════════════
+   Row 2: Token attention heatmap
+   ══════════════════════════════════════════════════════ #}
 <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-  <div class="flex items-start justify-between mb-4">
+  <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
     <div>
       <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest">
-        Token attention heatmap
+        Sentiment — token attention
       </h2>
       <p class="text-slate-500 text-xs mt-1">
-        Colour intensity = how much the model attended to each token when classifying.
-        Hover a token for its exact score.
+        Intensity shows how much the sentiment model attended to each token.
+        Hover for the exact score.
       </p>
     </div>
-
-    <!-- Legend -->
-    <div class="flex items-center gap-2 flex-shrink-0 ml-4">
+    <div class="flex items-center gap-2 flex-shrink-0">
       <span class="text-xs text-slate-500">Low</span>
       <div class="w-24 h-3 rounded-full"
            style="background: linear-gradient(to right,
-                    hsl({{ hue }}, 60%, 15%),
-                    hsl({{ hue }}, 80%, 55%));">
-      </div>
+                    hsl({{ sent_hue }}, 50%, 12%),
+                    hsl({{ sent_hue }}, 80%, 52%));"></div>
       <span class="text-xs text-slate-500">High</span>
     </div>
   </div>
 
-  <!-- Token pills -->
-  <div class="flex flex-wrap gap-1.5 leading-loose">
-    {% for token in result.tokens %}
-      {# Map 0-1 → lightness 15% (dark) to 55% (vibrant) #}
-      {% set lightness = (15 + token.normalized * 40)|int %}
-      {% set saturation = (40 + token.normalized * 40)|int %}
-      {% set bg = "hsl(" ~ hue ~ "," ~ saturation ~ "%," ~ lightness ~ "%)" %}
-      {# Text: white when dark background, slate-900 for very bright #}
-      {% set fg = "rgba(255,255,255,0.95)" if lightness < 45 else "rgba(255,255,255,0.7)" %}
+  <div class="flex flex-wrap gap-1.5">
+    {% for token in result.sentiment.tokens %}
+      {% set lightness   = (12 + token.normalized * 40)|int %}
+      {% set saturation  = (30 + token.normalized * 50)|int %}
+      {% set bg = "hsl(" ~ sent_hue ~ "," ~ saturation ~ "%," ~ lightness ~ "%)" %}
+      {% set fg = "rgba(255,255,255,0.85)" if lightness < 38 else "rgba(255,255,255,0.55)" %}
       <span
         class="token-pill inline-block cursor-default select-none rounded-lg
                border border-white/5 text-sm font-medium px-2.5 py-1"
@@ -143,29 +190,31 @@
       </span>
     {% endfor %}
   </div>
+
+  {# Note about SetFit ─────────────────────────────────────────────── #}
+  <p class="mt-5 text-xs text-slate-600 border-t border-slate-800 pt-4">
+    <span class="text-slate-500 font-medium">Production note:</span>
+    SetFit models don't expose attention weights natively. When swapping in the real
+    models, replace this heatmap with SHAP token attributions via
+    <code class="text-slate-500">shap.Explainer(setfit_model.predict_proba, masker)</code>.
+  </p>
 </div>
 
 {% endblock %}
 
 
 {% block scripts %}
-<!-- Chart.js for the doughnut chart -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-  (function () {
-    const confidence = {{ result.confidence }};
-    const remaining  = 1 - confidence;
-    const color      = "{{ chart_color }}";
-
-    const ctx = document.getElementById("confidence-chart");
+  function makeDonut(id, value, color) {
+    const ctx = document.getElementById(id);
     if (!ctx) return;
-
     new Chart(ctx, {
       type: "doughnut",
       data: {
         datasets: [{
-          data: [confidence, remaining],
-          backgroundColor: [color, "rgba(255,255,255,0.05)"],
+          data: [value, 1 - value],
+          backgroundColor: [color, "rgba(255,255,255,0.04)"],
           borderWidth: 0,
           hoverOffset: 0,
         }]
@@ -176,6 +225,9 @@
         plugins: { tooltip: { enabled: false }, legend: { display: false } },
       }
     });
-  })();
+  }
+
+  makeDonut("sent-chart",  {{ result.sentiment.confidence }}, "{{ sent_color }}");
+  makeDonut("theme-chart", {{ result.theme.confidence }},     "#6366f1");
 </script>
 {% endblock %}

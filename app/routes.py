@@ -1,5 +1,5 @@
 from app import app
-from flask import render_template, redirect, url_for, request
+from flask import render_template, request
 from app.form import Feedback_form
 from app.model import predict
 
