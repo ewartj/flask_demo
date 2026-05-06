@@ -43,14 +43,10 @@ COPY . .
 COPY --from=frontend /build/main.js ./app/static/js/main.js
 
 # ── 4. Pre-download HuggingFace demo models so first request is instant
-RUN uv run python scripts/download_models.py
+#    Uncomment once HuggingFace is reachable from the build environment.
+# RUN uv run python scripts/download_models.py
 
-EXPOSE 5000
+EXPOSE 5005
 
-# 1 worker + threads: avoids duplicating ~1 GB of model weights per worker.
-CMD ["uv", "run", "gunicorn", \
-     "--bind", "0.0.0.0:5000", \
-     "--workers", "1", \
-     "--threads", "4", \
-     "--timeout", "120", \
-     "analysis_app:app"]
+# Server settings (port, workers, threads, timeout) are read from config.yaml
+CMD ["uv", "run", "gunicorn", "--config", "gunicorn.conf.py", "analysis_app:app"]

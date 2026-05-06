@@ -1,0 +1,43 @@
+mlflow:
+  # MLflow server URL — override with MLFLOW_TRACKING_URI env var per environment
+  tracking_uri: ""
+  # Model Registry URIs — set MLFLOW_SENTIMENT_MODEL_URI / MLFLOW_THEME_MODEL_URI to override
+  sentiment_model_uri: "models:/Sentiment/Production"
+  theme_model_uri: "models:/Theme/Production"
+  # tracking_token: set via MLFLOW_TRACKING_TOKEN env var — never put secrets here
+
+# SetFit integer → human label mappings (must match Themiator training labels)
+labels:
+  sentiment:
+    -1: "Negative"
+    0:  "Neutral"
+    1:  "Positive"
+  theme:
+    0: "Unclassified"
+    1: "Care & service"
+    2: "Consultation & communication"
+    3: "Staff professionalism & attitude"
+    4: "Environment & facilities"
+    8: "Other"
+    9: "Unclassified"
+
+# Theme candidates used by the HuggingFace zero-shot demo classifier
+# (ignored when MLflow is active)
+theme_labels:
+  - "Care & service"
+  - "Consultation & communication"
+  - "Staff professionalism & attitude"
+  - "Environment & facilities"
+  - "Waiting times & access"
+  - "Medication & treatment"
+
+# HuggingFace demo models — uncomment when HF is accessible from the build environment
+# demo_models:
+#   sentiment: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+#   zero_shot:  "cross-encoder/nli-deberta-v3-small"
+
+server:
+  port: 5005
+  workers: 1      # keep at 1 — multiple workers each load ~1 GB of model weights
+  threads: 4
+  timeout: 120    # seconds — long enough for first-request model load

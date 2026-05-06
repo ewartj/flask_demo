@@ -1,149 +1,176 @@
 """
-Model inference layer for the Sentiment + Theme demo.
+Model inference layer.
 
-Demo models (swappable):
-  SENTIMENT_MODEL  — cardiffnlp/twitter-roberta-base-sentiment-latest  (3-class)
-  ZERO_SHOT_MODEL  — cross-encoder/nli-deberta-v3-small  (zero-shot theme)
+Mode is selected by whether MLFLOW_TRACKING_URI is set (env var or config.yaml):
 
-Production swap (SetFit):
-  Uncomment the SetFit block below and point MODEL paths at your
-  /app/ext_models/<name> directories. The returned dict shape is identical.
+  Production (MLflow):
+    Set MLFLOW_TRACKING_URI in config.yaml or as an env var.
+    MLFLOW_TRACKING_TOKEN  — env var only (secret, never in config.yaml)
+
+  Demo (HuggingFace):
+    Currently commented out — re-enable when HuggingFace is accessible.
+    Uncomment the HF blocks below and restore the _predict_demo / predict() logic.
 """
 from __future__ import annotations
 import re
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    pipeline,
-)
-import torch
+from app.config_loader import mlflow_config, sentiment_labels, theme_labels
 
-# ── Demo model identifiers ───────────────────────────────────────────────────
-SENTIMENT_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-ZERO_SHOT_MODEL = "cross-encoder/nli-deberta-v3-small"
+# ── HuggingFace demo imports — commented out while HF is blocked ──────────────
+# from transformers import (
+#     AutoTokenizer,
+#     AutoModelForSequenceClassification,
+#     pipeline,
+# )
+# import torch
 
-# Mirror Themiator's theme label set
-THEME_LABELS = [
-    "Care & service",
-    "Consultation & communication",
-    "Staff professionalism & attitude",
-    "Environment & facilities",
-    "Waiting times & access",
-    "Medication & treatment",
-]
+# ── Config ───────────────────────────────────────────────────────────────────
+_mlflow_cfg = mlflow_config()
+USE_MLFLOW  = bool(_mlflow_cfg["tracking_uri"])
 
-# ── SetFit production swap (uncomment + set paths) ───────────────────────────
-# from setfit import SetFitModel
-# SENTIMENT_MODEL_PATH = "/app/ext_models/Sentiment.BEST.balanced.4epochs"
-# THEME_MODEL_PATH     = "/app/ext_models/Theme.BEST.imbal.2eps"
-# SENTIMENT_INT_TO_LABEL = {-1: "Negative", 0: "Neutral", 1: "Positive"}
-# THEME_INT_TO_LABEL = {
-#     0: "Unclassified", 1: "Care & service", 2: "Consultation & communication",
-#     3: "Staff professionalism & attitude", 4: "Environment & facilities",
-# }
+SENTIMENT_INT_TO_LABEL = sentiment_labels()
+THEME_INT_TO_LABEL     = theme_labels()
+
+# ── Demo model identifiers — commented out while HF is blocked ───────────────
+# _DEMO_SENTIMENT_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+# _DEMO_ZERO_SHOT_MODEL = "cross-encoder/nli-deberta-v3-small"
 
 # ── Lazy singletons ──────────────────────────────────────────────────────────
-_sentiment_tok = None
-_sentiment_mdl = None
-_theme_pipe    = None
+_mlflow_sentiment = None
+_mlflow_theme     = None
+# _demo_sent_tok = None   # HF demo — commented out while HF is blocked
+# _demo_sent_mdl = None
+# _demo_theme_pipe = None
 
 
 # ── Text cleaning (matches Themiator's clean_text pipeline) ──────────────────
 def _clean(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"\d+", "", text)
-    return text
+    return re.sub(r"\d+", "", text.lower().strip())
 
 
-# ── Loaders ──────────────────────────────────────────────────────────────────
-def _load_sentiment() -> None:
-    global _sentiment_tok, _sentiment_mdl
-    if _sentiment_mdl is None:
-        _sentiment_tok = AutoTokenizer.from_pretrained(SENTIMENT_MODEL)
-        _sentiment_mdl = AutoModelForSequenceClassification.from_pretrained(
-            SENTIMENT_MODEL, output_attentions=True
-        )
-        _sentiment_mdl.eval()
+# ── MLflow loader ─────────────────────────────────────────────────────────────
+def _load_mlflow() -> None:
+    global _mlflow_sentiment, _mlflow_theme
+    if _mlflow_sentiment is None:
+        import mlflow
+        if _mlflow_cfg["tracking_token"]:
+            import os
+            os.environ["MLFLOW_TRACKING_TOKEN"] = _mlflow_cfg["tracking_token"]
+        mlflow.set_tracking_uri(_mlflow_cfg["tracking_uri"])
+        _mlflow_sentiment = mlflow.pyfunc.load_model(_mlflow_cfg["sentiment_model_uri"])
+        _mlflow_theme     = mlflow.pyfunc.load_model(_mlflow_cfg["theme_model_uri"])
 
 
-def _load_theme() -> None:
-    global _theme_pipe
-    if _theme_pipe is None:
-        _theme_pipe = pipeline(
-            "zero-shot-classification",
-            model=ZERO_SHOT_MODEL,
-            device=-1,
-        )
+# ── Demo loaders — commented out while HF is blocked ─────────────────────────
+# def _load_demo_sentiment() -> None:
+#     global _demo_sent_tok, _demo_sent_mdl
+#     if _demo_sent_mdl is None:
+#         _demo_sent_tok = AutoTokenizer.from_pretrained(_DEMO_SENTIMENT_MODEL)
+#         _demo_sent_mdl = AutoModelForSequenceClassification.from_pretrained(
+#             _DEMO_SENTIMENT_MODEL, output_attentions=True
+#         )
+#         _demo_sent_mdl.eval()
+#
+# def _load_demo_theme() -> None:
+#     global _demo_theme_pipe
+#     if _demo_theme_pipe is None:
+#         _demo_theme_pipe = pipeline(
+#             "zero-shot-classification", model=_DEMO_ZERO_SHOT_MODEL, device=-1
+#         )
 
 
-# ── Token merging (handles RoBERTa Ġ, BERT ##, SentencePiece ▁) ─────────────
+# ── Token merging (RoBERTa Ġ, BERT ##, SentencePiece ▁) ─────────────────────
 def _merge_tokens(tokens: list[str], scores: list[float]) -> list[dict]:
     SPECIAL = {"<s>", "</s>", "<pad>", "[CLS]", "[SEP]"}
     merged: list[dict] = []
-
     for tok, score in zip(tokens, scores):
         if tok in SPECIAL:
             continue
-        if tok.startswith("Ġ"):              # RoBERTa: space = new word
+        if tok.startswith("Ġ"):
             merged.append({"display": tok[1:], "score": score})
-        elif tok.startswith("##"):           # BERT subword continuation
+        elif tok.startswith("##"):
             if merged:
                 merged[-1]["display"] += tok[2:]
                 merged[-1]["score"]   += score
-        elif tok.startswith("▁"):            # SentencePiece: new word
+        elif tok.startswith("▁"):
             merged.append({"display": tok[1:], "score": score})
-        elif merged:                         # bare continuation
+        elif merged:
             merged[-1]["display"] += tok
             merged[-1]["score"]   += score
         else:
             merged.append({"display": tok, "score": score})
-
     if merged:
-        lo   = min(t["score"] for t in merged)
-        hi   = max(t["score"] for t in merged)
+        lo, hi = min(t["score"] for t in merged), max(t["score"] for t in merged)
         span = hi - lo or 1.0
         for t in merged:
             t["normalized"] = round((t["score"] - lo) / span, 4)
-
     return merged
 
 
-# ── Public API ───────────────────────────────────────────────────────────────
-def predict(text: str) -> dict:
-    _load_sentiment()
-    _load_theme()
-
+# ── Predict paths ─────────────────────────────────────────────────────────────
+def _predict_mlflow(text: str) -> dict:
+    _load_mlflow()
     clean = _clean(text)
 
-    # — Sentiment ——————————————————————————————————————————————————————————————
-    inputs = _sentiment_tok(clean, return_tensors="pt", truncation=True, max_length=128)
-    with torch.no_grad():
-        outputs = _sentiment_mdl(**inputs)
+    sent_int  = int(_mlflow_sentiment.predict([clean])[0])
+    theme_int = int(_mlflow_theme.predict([clean])[0])
 
-    probs        = torch.softmax(outputs.logits, dim=-1).squeeze().tolist()
-    id2label     = _sentiment_mdl.config.id2label
-    predicted_id = int(torch.argmax(outputs.logits))
-
-    raw_tokens = _sentiment_tok.convert_ids_to_tokens(inputs["input_ids"][0])
-    cls_attn   = outputs.attentions[-1][0][:, 0, :].mean(dim=0).tolist()
-    tokens     = _merge_tokens(raw_tokens, cls_attn)
-
-    sentiment = {
-        "label":      id2label[predicted_id].capitalize(),
-        "confidence": round(probs[predicted_id], 4),
-        "scores":     {id2label[i].capitalize(): round(p, 4) for i, p in enumerate(probs)},
-        "tokens":     tokens,
-    }
-
-    # — Theme ——————————————————————————————————————————————————————————————————
-    zs = _theme_pipe(clean, THEME_LABELS, multi_label=False)
-    theme = {
-        "label":      zs["labels"][0],
-        "confidence": round(zs["scores"][0], 4),
-        "scores":     {
-            label: round(score, 4)
-            for label, score in zip(zs["labels"], zs["scores"])
+    return {
+        "text": text,
+        "sentiment": {
+            "label":      SENTIMENT_INT_TO_LABEL.get(sent_int, str(sent_int)),
+            "confidence": None,
+            "scores":     {},
+            "tokens":     [],
         },
+        "theme": {
+            "label":      THEME_INT_TO_LABEL.get(theme_int, str(theme_int)),
+            "confidence": None,
+            "scores":     {},
+        },
+        "source": "mlflow",
     }
 
-    return {"text": text, "sentiment": sentiment, "theme": theme}
+
+# ── Demo predict — commented out while HF is blocked ─────────────────────────
+# def _predict_demo(text: str) -> dict:
+#     _load_demo_sentiment()
+#     _load_demo_theme()
+#     clean = _clean(text)
+#     inputs = _demo_sent_tok(clean, return_tensors="pt", truncation=True, max_length=128)
+#     with torch.no_grad():
+#         outputs = _demo_sent_mdl(**inputs)
+#     probs        = torch.softmax(outputs.logits, dim=-1).squeeze().tolist()
+#     id2label     = _demo_sent_mdl.config.id2label
+#     predicted_id = int(torch.argmax(outputs.logits))
+#     raw_tokens   = _demo_sent_tok.convert_ids_to_tokens(inputs["input_ids"][0])
+#     cls_attn     = outputs.attentions[-1][0][:, 0, :].mean(dim=0).tolist()
+#     tokens       = _merge_tokens(raw_tokens, cls_attn)
+#     theme_cands  = theme_candidates()
+#     zs           = _demo_theme_pipe(clean, theme_cands, multi_label=False)
+#     return {
+#         "text": text,
+#         "sentiment": {
+#             "label":      id2label[predicted_id].capitalize(),
+#             "confidence": round(probs[predicted_id], 4),
+#             "scores":     {id2label[i].capitalize(): round(p, 4) for i, p in enumerate(probs)},
+#             "tokens":     tokens,
+#         },
+#         "theme": {
+#             "label":      zs["labels"][0],
+#             "confidence": round(zs["scores"][0], 4),
+#             "scores":     {l: round(s, 4) for l, s in zip(zs["labels"], zs["scores"])},
+#         },
+#         "source": "demo",
+#     }
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+def predict(text: str) -> dict:
+    if not USE_MLFLOW:
+        raise RuntimeError(
+            "MLFLOW_TRACKING_URI is not configured. Set it in config.yaml or as "
+            "the MLFLOW_TRACKING_URI environment variable."
+        )
+    return _predict_mlflow(text)
+    # When HF is accessible again, restore this:
+    # return _predict_mlflow(text) if USE_MLFLOW else _predict_demo(text)

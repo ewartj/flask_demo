@@ -2,18 +2,17 @@ services:
   web:
     build: .
     ports:
-      - "5000:5000"
+      - "5005:5005"
     environment:
-      # Override in production — never leave the default in a public deployment
-      SECRET_KEY: ${SECRET_KEY:-changeme-in-production}
+      # ── Secrets — never put these in config.yaml ───────────────────────────
+      SECRET_KEY:            ${SECRET_KEY:-changeme-in-production}
+      MLFLOW_TRACKING_TOKEN: ${MLFLOW_TRACKING_TOKEN:-}
+      # ── Per-environment overrides (can also be set in config.yaml) ─────────
+      MLFLOW_TRACKING_URI:   ${MLFLOW_TRACKING_URI:-}
       FLASK_APP: analysis_app.py
-    volumes:
-      # Mount your real SetFit models here when ready.
-      # Matches the hardcoded path in Themiator: /app/ext_models/
-      - ${EXT_MODELS_PATH:-./ext_models}:/app/ext_models:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:5005/"]
       interval: 30s
       timeout: 10s
       retries: 3
