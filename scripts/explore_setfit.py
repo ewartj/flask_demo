@@ -86,12 +86,24 @@ if hf_model is not None:
             outputs = hf_model(**inputs)
 
         if outputs.attentions:
-            last_attn = outputs.attentions[-1]       # (batch, heads, seq, seq)
-            cls_attn  = last_attn[0, :, 0, :].mean(dim=0)  # avg over heads
-            print(f"\nCLS attention scores (one per token):")
-            for tok, score in zip(tokens, cls_attn.tolist()):
-                bar = "█" * int(score * 80)
-                print(f"  {tok:<20} {score:.4f}  {bar}")
+            # Strategy A: last layer only (often flat/diffuse)
+            last_attn = outputs.attentions[-1]
+            cls_last  = last_attn[0, :, 0, :].mean(dim=0)
+
+            # Strategy B: average CLS attention across ALL layers (richer signal)
+            all_layers = torch.stack([layer[0, :, 0, :].mean(dim=0)
+                                      for layer in outputs.attentions])
+            cls_all = all_layers.mean(dim=0)
+
+            for label, scores in [("Last layer only", cls_last), ("All layers avg", cls_all)]:
+                lo, hi = scores.min().item(), scores.max().item()
+                span = hi - lo or 1.0
+                print(f"\n{label}  (min={lo:.4f} max={hi:.4f} range={span:.4f}):")
+                for tok, score in zip(tokens, scores.tolist()):
+                    norm = (score - lo) / span
+                    bar  = "█" * int(norm * 40)
+                    print(f"  {tok:<20} {score:.4f}  {norm:.2f}  {bar}")
+
             print("\n✓ Attention weights ARE available — heatmap will work.")
         else:
             print("✗ No attention weights returned.")
