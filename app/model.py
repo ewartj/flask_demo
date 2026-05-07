@@ -16,6 +16,7 @@ Demo (HuggingFace):
 """
 from __future__ import annotations
 import re
+import torch
 from app.config_loader import mlflow_config, sentiment_labels, theme_labels
 
 # ── HuggingFace demo imports — commented out while HF is blocked ──────────────
@@ -24,7 +25,6 @@ from app.config_loader import mlflow_config, sentiment_labels, theme_labels
 #     AutoModelForSequenceClassification,
 #     pipeline,
 # )
-# import torch
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _mlflow_cfg = mlflow_config()
@@ -79,6 +79,14 @@ def _load_models() -> None:
     _sentiment_model = SetFitModel.from_pretrained(sent_path)
     _theme_model     = SetFitModel.from_pretrained(theme_path)
 
+    # Enable attention on both models' RoBERTa bodies.
+    # Eager implementation required — scaled_dot_product_attention doesn't
+    # support output_attentions=True with this position embedding type.
+    for setfit_model in (_sentiment_model, _theme_model):
+        hf = setfit_model.model_body[0].auto_model
+        hf.config.output_attentions    = True
+        hf.config._attn_implementation = "eager"
+
 
 # ── Demo loaders — commented out while HF is blocked ─────────────────────────
 # def _load_demo_sentiment() -> None:
@@ -126,27 +134,58 @@ def _merge_tokens(tokens: list[str], scores: list[float]) -> list[dict]:
     return merged
 
 
-# ── Predict paths ─────────────────────────────────────────────────────────────
+# ── Attention extraction ──────────────────────────────────────────────────────
+def _get_attention_tokens(setfit_model, clean: str) -> list[dict]:
+    """
+    Extracts per-word attention scores from a SetFit model's RoBERTa body.
+
+    How it works:
+      - Each SetFit model wraps a SentenceTransformer which wraps a RoBERTa model.
+      - We pass the text to the underlying HF model with output_attentions=True.
+      - Last layer attention matrix (heads × seq × seq) is averaged across heads,
+        then we take the CLS row (index 0) — one score per token representing
+        what the model focused on when building the sentence embedding used
+        for classification.
+      - Special tokens (<s>, </s>) are dropped and RoBERTa's Ġ subword pieces
+        are merged before normalising scores to 0–1.
+    """
+    transformer_module = setfit_model.model_body[0]
+    hf_model  = transformer_module.auto_model
+    tokenizer = transformer_module.tokenizer
+
+    inputs = tokenizer(clean, return_tensors="pt", truncation=True, max_length=128)
+    with torch.no_grad():
+        outputs = hf_model(**inputs)
+
+    cls_attn   = outputs.attentions[-1][0, :, 0, :].mean(dim=0).tolist()
+    raw_tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+
+    return _merge_tokens(raw_tokens, cls_attn)
+
+
+# ── Predict ───────────────────────────────────────────────────────────────────
 def _predict_setfit(text: str) -> dict:
     _load_models()
     clean = _clean(text)
 
-    # predict() takes a list and returns a list — matches Themiator exactly
-    sent_int  = int(_sentiment_model.predict([clean])[0])
-    theme_int = int(_theme_model.predict([clean])[0])
+    sent_int      = int(_sentiment_model.predict([clean])[0])
+    theme_int     = int(_theme_model.predict([clean])[0])
+    sent_tokens   = _get_attention_tokens(_sentiment_model, clean)
+    theme_tokens  = _get_attention_tokens(_theme_model, clean)
 
     return {
         "text": text,
         "sentiment": {
-            "label":      SENTIMENT_INT_TO_LABEL.get(sent_int,  str(sent_int)),
-            "confidence": None,   # SetFit predict() doesn't return probabilities
+            "label":      SENTIMENT_INT_TO_LABEL.get(sent_int, str(sent_int)),
+            "confidence": None,
             "scores":     {},
-            "tokens":     [],     # attention heatmap not available with SetFit
+            "tokens":     sent_tokens,
         },
         "theme": {
             "label":      THEME_INT_TO_LABEL.get(theme_int, str(theme_int)),
             "confidence": None,
             "scores":     {},
+            "tokens":     theme_tokens,
         },
         "source": "mlflow",
     }
